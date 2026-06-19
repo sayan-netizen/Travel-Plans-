@@ -71,7 +71,6 @@ const GoogleAuthSection = ({ onSuccess }) => {
             size="large"
             onSuccess={onSuccess}
             onError={() => console.log("Google Login failed")}
-            useOneTap
           />
         )}
       </Box>
