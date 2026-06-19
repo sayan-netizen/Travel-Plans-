@@ -29,7 +29,12 @@ const limiter = rateLimit({
 app.use("/api/auth", limiter);
 
 // Core Middleware
-const allowedOrigins = ["http://localhost:3000"];
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5000",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5000",
+];
 
 const frontendUrls = [];
 if (process.env.FRONTEND_URL) {
@@ -48,13 +53,18 @@ if (process.env.FRONTEND_URLS) {
 }
 allowedOrigins.push(...frontendUrls);
 
+function isOriginAllowed(origin) {
+  if (!origin) return true;
+  return allowedOrigins.includes(origin);
+}
+
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      if (origin.includes("localhost") || origin.includes("vercel.app")) {
+      if (isOriginAllowed(origin)) {
         return callback(null, true);
       }
+      console.warn(`CORS blocked origin: ${origin}`);
       callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
@@ -71,6 +81,7 @@ const translatorRoutes = require("./routes/translator");
 const bookingRoutes = require("./routes/booking");
 const destinationRoutes = require("./routes/destinations");
 const packingRoutes = require("./routes/packing");
+const currencyRoutes = require("./routes/currency");
 
 // Use routes
 app.use("/api/auth", authRoutes);
@@ -81,6 +92,7 @@ app.use("/api/translator", translatorRoutes);
 app.use("/api/booking", bookingRoutes);
 app.use("/api/destinations", destinationRoutes);
 app.use("/api/packing", packingRoutes);
+app.use("/api/currency", currencyRoutes);
 
 // Base route
 app.get("/", (req, res) => {
@@ -89,6 +101,15 @@ app.get("/", (req, res) => {
 
 // Global error handler (must be last)
 app.use(errorHandler);
+
+if (!process.env.MONGO_URI) {
+  console.error(
+    "MONGO_URI is missing — set it in server/.env before using auth.",
+  );
+}
+if (!process.env.JWT_SECRET) {
+  console.error("JWT_SECRET is missing — login and register will fail.");
+}
 
 // Connect to MongoDB
 mongoose

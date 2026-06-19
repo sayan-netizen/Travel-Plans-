@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
-import { register } from "../redux/actions/authActions";
+import { register, googleLogin } from "../redux/actions/authActions";
+import { GoogleLogin } from "@react-oauth/google";
 import {
   Box,
   TextField,
@@ -25,12 +26,76 @@ import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import CheckCircleOutlineIcon from "@mui/icons-material/TaskAlt";
 import ArrowForwardIcon from "@mui/icons-material/East";
 import ArrowBackIcon from "@mui/icons-material/West";
-import FacebookIcon from "@mui/icons-material/Facebook";
+
 import HowToRegIcon from "@mui/icons-material/HowToReg";
 import PrimaryButton from "../components/PrimaryButton";
 
+/**
+ * Renders the Google Sign-In button and surrounding OR divider.
+ * Uses a ResizeObserver to measure available container width so that
+ * the GoogleLogin iframe never overflows its parent on any viewport.
+ */
+const GoogleAuthSection = ({ onSuccess }) => {
+  const containerRef = useRef(null);
+  const [buttonWidth, setButtonWidth] = useState(null);
+
+  const updateWidth = useCallback(() => {
+    if (containerRef.current) {
+      setButtonWidth(Math.floor(containerRef.current.clientWidth));
+    }
+  }, []);
+
+  useEffect(() => {
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    if (containerRef.current) observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [updateWidth]);
+
+  return (
+    <>
+      <Divider sx={{ my: 4 }}>
+        <Typography variant="body2" color="text.secondary">
+          OR
+        </Typography>
+      </Divider>
+
+      {/* Container measured so we can feed exact px width to GoogleLogin */}
+      <Box ref={containerRef} sx={{ width: "100%", overflow: "hidden" }}>
+        {buttonWidth !== null && (
+          <GoogleLogin
+            theme="outlined"
+            width={buttonWidth}
+            shape="pill"
+            text="continue_with"
+            size="large"
+            onSuccess={onSuccess}
+            onError={() => console.log("Google Login failed")}
+          />
+        )}
+      </Box>
+    </>
+  );
+};
+
 const Register = () => {
   const [activeStep, setActiveStep] = useState(0);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+
+  // Auto-play the carousel every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentImageIndex((prev) => (prev + 1) % 3); // 3 is the number of images
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Carousel images mapping perfectly to the 3 registration steps
+  const carouselImages = [
+    "/images/carousel/mountain.png",
+    "/images/carousel/beach.png",
+    "/images/carousel/city.png",
+  ];
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -45,6 +110,7 @@ const Register = () => {
     email: "",
     password: "",
   });
+
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState("");
 
@@ -59,54 +125,6 @@ const Register = () => {
       navigate("/dashboard");
     }
   }, [isAuthenticated, navigate]);
-
-  const handleGoogleCallback = (response) => {
-    // Google Sign-In disabled in this commit since googleLogin action
-    // is not present in authActions.js in the current repo.
-    // Keep this handler to avoid runtime errors.
-    console.log("Google callback received", response);
-  };
-
-  useEffect(() => {
-    // Only initialize Google Sign-In if activeStep is 0 (Personal Information / first step)
-    if (activeStep !== 0) return;
-
-    const initializeGoogleSignIn = () => {
-      if (window.google) {
-        window.google.accounts.id.initialize({
-          client_id:
-            process.env.REACT_APP_GOOGLE_CLIENT_ID ||
-            "643113382684-q82ot662op6kq7fnc1brg3ivclq3pmvk.apps.googleusercontent.com",
-          callback: handleGoogleCallback,
-        });
-
-        const googleBtn = document.getElementById("google-signin-btn");
-        if (googleBtn) {
-          window.google.accounts.id.renderButton(googleBtn, {
-            theme: "outline",
-            size: "large",
-            text: "signup_with",
-            width: isMobile ? 280 : 360,
-          });
-        }
-      }
-    };
-
-    initializeGoogleSignIn();
-
-    const script = document.querySelector(
-      'script[src="https://accounts.google.com/gsi/client"]',
-    );
-    if (script) {
-      script.addEventListener("load", initializeGoogleSignIn);
-    }
-
-    return () => {
-      if (script) {
-        script.removeEventListener("load", initializeGoogleSignIn);
-      }
-    };
-  }, [activeStep, isMobile, dispatch]);
 
   const steps = ["Personal Information", "Account Setup", "Confirmation"];
 
@@ -141,7 +159,7 @@ const Register = () => {
       const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
       if (value && !passwordRegex.test(value)) {
         newErrors.password =
-          "Password must be at least 8 chars with atleast 1 uppercase, 1 lowercase, 1 number, and 1 special char";
+          "Password must be at least 8 chars with at least 1 uppercase, 1 lowercase, 1 number, and 1 special char";
       } else {
         newErrors.password = "";
       }
@@ -189,6 +207,10 @@ const Register = () => {
     } else {
       handleNext();
     }
+  };
+
+  const handleGoogleSuccess = (CredentialResponse) => {
+    dispatch(googleLogin(CredentialResponse, navigate));
   };
 
   const isNextDisabled = () => {
@@ -401,71 +423,123 @@ const Register = () => {
         backgroundColor: theme.palette.background.default,
       }}
     >
-      {/* Left side with image - shown only on desktop */}
+      {/* Left side with image carousel - shown only on desktop */}
       {!isMobile && (
         <Box
           sx={{
             flex: 1,
-            backgroundImage:
-              "url(https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2070&auto=format&fit=crop)",
-            backgroundSize: "cover",
-            backgroundPosition: "center",
             position: "sticky",
             top: 0,
             height: "100vh",
-            alignSelf: "flex-start",
+            overflow: "hidden",
             display: "flex",
             flexDirection: "column",
             justifyContent: "flex-end",
+            p: 2, // Add a subtle outer padding for a premium border effect
           }}
         >
+          {/* Inner container to hold the images with rounded corners */}
           <Box
             sx={{
               position: "absolute",
-              top: 0,
-              right: 0,
-              bottom: 0,
-              left: 0,
-              backgroundColor: "rgba(0, 0, 0, 0.4)",
-              backdropFilter: "blur(2px)",
+              top: 16,
+              left: 16,
+              right: 16,
+              bottom: 16,
+              borderRadius: 4,
+              overflow: "hidden",
+              boxShadow: "0 24px 48px rgba(0,0,0,0.2)", // Deep shadow for depth
             }}
-          />
-          <Box sx={{ position: "relative", p: 6, color: "white" }}>
+          >
+            {/* The 3 fading images */}
+            {carouselImages.map((img, index) => (
+              <Box
+                key={index}
+                sx={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: "100%",
+                  backgroundImage: `url(${img})`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                  opacity: currentImageIndex === index ? 1 : 0,
+                  transition: "opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1)", // Soft, premium transition
+                  zIndex: currentImageIndex === index ? 1 : 0,
+                }}
+              />
+            ))}
+
+            {/* Dark overlay for text legibility */}
+            <Box
+              sx={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                left: 0,
+                backgroundColor: "rgba(0, 0, 0, 0.3)",
+                background:
+                  "linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 50%)",
+                zIndex: 2,
+              }}
+            />
+          </Box>
+
+          {/* Text and Pagination overlay */}
+          <Box sx={{ position: "relative", zIndex: 3, p: 6, color: "white" }}>
             <Typography
               variant="h3"
               component="h1"
-              sx={{ fontWeight: 700, mb: 2 }}
+              sx={{
+                fontWeight: 800,
+                mb: 2,
+                textShadow: "0 2px 10px rgba(0,0,0,0.3)",
+              }}
             >
               Join PackGo
             </Typography>
-            <Typography variant="h5" sx={{ mb: 4, maxWidth: "80%" }}>
-              Create an account to start planning your next adventure
+            <Typography
+              variant="h5"
+              sx={{
+                mb: 4,
+                maxWidth: "80%",
+                fontWeight: 400,
+                textShadow: "0 2px 4px rgba(0,0,0,0.3)",
+              }}
+            >
+              Create an account to start planning your next breathtaking
+              adventure.
             </Typography>
-            <Box sx={{ display: "flex", gap: 1, mb: 4 }}>
-              <Box
-                sx={{
-                  width: 12,
-                  height: 12,
-                  bgcolor: "white",
-                  borderRadius: "50%",
-                }}
-              />
-              <Box
-                sx={{
-                  width: 12,
-                  height: 12,
-                  bgcolor: "rgba(255, 255, 255, 0.5)",
-                  borderRadius: "50%",
-                }}
-              />
-              <Box
-                sx={{
-                  width: 12,
-                  height: 12,
-                  bgcolor: "rgba(255, 255, 255, 0.5)",
-                  borderRadius: "50%",
-                }}
-              />
+
+            {/* Modern Pagination UI */}
+            <Box
+              sx={{ display: "flex", gap: 1.5, mb: 2, alignItems: "center" }}
+            >
+              {carouselImages.map((_, index) => (
+                <Box
+                  key={index}
+                  sx={{
+                    width: currentImageIndex === index ? 32 : 10,
+                    height: 10,
+                    bgcolor:
+                      currentImageIndex === index
+                        ? "white"
+                        : "rgba(255, 255, 255, 0.4)",
+                    borderRadius: 5,
+                    transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+                    cursor: "pointer",
+                    "&:hover": {
+                      bgcolor:
+                        currentImageIndex === index
+                          ? "white"
+                          : "rgba(255, 255, 255, 0.7)",
+                    },
+                  }}
+                  onClick={() => setCurrentImageIndex(index)}
+                />
+              ))}
             </Box>
           </Box>
         </Box>
@@ -480,10 +554,43 @@ const Register = () => {
           justifyContent: "center",
           alignItems: "center",
           p: 4,
+          height: "100vh",
+          overflow: "auto",
         }}
       >
         <Box sx={{ maxWidth: 480, width: "100%" }}>
-          <Box sx={{ textAlign: "center", mb: 4 }}>
+          <Box sx={{ position: "relative", textAlign: "center", mb: 4 }}>
+            {/* Back to Home */}
+            <Box
+              sx={{
+                position: "absolute",
+                left: { xs: 0, sm: -20, md: -50, lg: -80 },
+                top: 0,
+              }}
+            >
+              <Link
+                component={RouterLink}
+                to="/"
+                variant="body2"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 36,
+                  height: 36,
+                  borderRadius: "50%",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  backgroundColor: "background.paper",
+                  textDecoration: "none",
+                  transition: "0.2s ease",
+                  "&:hover": { backgroundColor: "action.hover" },
+                }}
+              >
+                <ArrowBackIcon sx={{ mr: 0.5, fontSize: 18 }} />
+              </Link>
+            </Box>
+
             <Typography variant="h4" gutterBottom sx={{ fontWeight: 700 }}>
               Create Account
             </Typography>
@@ -540,39 +647,7 @@ const Register = () => {
               </Box>
 
               {activeStep === 0 && (
-                <>
-                  <Divider sx={{ my: 4 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      OR
-                    </Typography>
-                  </Divider>
-
-                  <Box
-                    sx={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      gap: 2,
-                    }}
-                  >
-                    <div id="google-signin-btn" />
-                    <Button
-                      variant="outlined"
-                      startIcon={<FacebookIcon />}
-                      disabled
-                      sx={{
-                        borderRadius: 2,
-                        py: 1,
-                        width: isMobile ? 280 : 360,
-                        color: "#4267B2",
-                        borderColor: "#4267B2",
-                        opacity: 0.5,
-                      }}
-                    >
-                      Facebook
-                    </Button>
-                  </Box>
-                </>
+                <GoogleAuthSection onSuccess={handleGoogleSuccess} />
               )}
             </form>
           </Paper>
